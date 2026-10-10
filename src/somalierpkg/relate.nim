@@ -39,10 +39,6 @@ type Stat4 = object
 
 type relation_matrices = object
   sites_tested: int
-  ibs: seq[uint16]
-  n: seq[uint16]
-  x: seq[uint16]
-  shared_hom_alts: seq[uint16]
   samples: seq[string]
   # n-samples * n_sites
   allele_counts: seq[seq[allele_count]]
@@ -276,9 +272,6 @@ proc readGroups(path: string, existing_groups: var seq[pair]): seq[pair] =
             existing_groups.add(toadd)
 
 
-proc n_samples(r: relation_matrices): int {.inline.} =
-  return r.samples.len
-
 proc relatedness(r: var relation_matrices, j: int,
     k: int): relation {.inline.} =
   var j = j
@@ -290,34 +283,11 @@ proc relatedness(r: var relation_matrices, j: int,
   let hets_k = r.gt_counts[1][k]
   let hets_j = r.gt_counts[1][j]
 
-  if r.n[j * r.n_samples + k] > 0'u16: # used previously calculated data
-    return relation( #sample_a: sample_names[j],
-                 #sample_b: sample_names[k],
-      hets_a: hets_j, hets_b: hets_k,
-      hom_alts_a: r.gt_counts[2][j], hom_alts_b: r.gt_counts[2][k],
-      ibs0: r.ibs[j * r.n_samples + k],
-      shared_hets: r.ibs[k * r.n_samples + j],
-      shared_hom_alts: r.shared_hom_alts[j * r.n_samples + k],
-      het_ab: r.shared_hom_alts[k * r.n_samples + j],
-      ibs2: r.n[k * r.n_samples + j],
-      n: r.n[j * r.n_samples + k],
-      x_ibs0: r.x[j * r.n_samples + k],
-      x_ibs2: r.x[k * r.n_samples + j],
-    )
-
+  # The all-pairs iterator visits each pair once. Recompute the occasional
+  # pedigree lookup from the genotype bitsets instead of retaining dense
+  # sample-by-sample matrices for every pair.
   let ir = r.genotypes[j].IBS(r.genotypes[k])
-  # now fill the matrices so they can be used from javascript
-  r.ibs[j * r.n_samples + k] = ir.IBS0.uint16
-  r.ibs[k * r.n_samples + j] = ir.shared_hets.uint16
-  r.n[j * r.n_samples + k] = ir.N.uint16
-  r.n[k * r.n_samples + j] = ir.IBS2.uint16
-  r.shared_hom_alts[j * r.n_samples + k] = ir.shared_hom_alts.uint16
-  r.shared_hom_alts[k * r.n_samples + j] = min(uint16.high.int32,
-      ir.het_ab).uint16
-
   let xir = r.x_genotypes[j].XIBS(r.x_genotypes[k])
-  r.x[j * r.n_samples + k] = xir.IBS0.uint16
-  r.x[k * r.n_samples + j] = xir.IBS2.uint16
 
   result = relation( #sample_a: sample_names[j],
                  #sample_b: sample_names[k],
@@ -482,12 +452,7 @@ proc read_extracted*(paths: seq[string], min_ab: float, min_depth: int,
   var n_samples = paths.len
 
   # aggregated from all samples
-  result = relation_matrices(ibs: newSeq[uint16](n_samples * n_samples),
-                             n: newSeq[uint16](n_samples * n_samples),
-                             shared_hom_alts: newSeq[uint16](n_samples *
-                                 n_samples),
-                             x: newSeq[uint16](n_samples * n_samples),
-                             samples: newSeq[string](n_samples),
+  result = relation_matrices(samples: newSeq[string](n_samples),
                              allele_counts: newSeq[seq[allele_count]](
                                  n_samples),
                              x_allele_counts: newSeq[seq[allele_count]](
